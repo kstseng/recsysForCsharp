@@ -39,7 +39,7 @@ namespace recsysList
         {
             // Retrieve the storage account from the connection string.
             CloudStorageAccount storageAccount = CloudStorageAccount.Parse(
-                ConfigurationManager.AppSettings["StorageConnectionString"]);
+                System.Configuration.ConfigurationManager.AppSettings["StorageConnectionString"]);
 
             // Create the table client.
             CloudTableClient tableClientState = storageAccount.CreateCloudTableClient();
@@ -53,13 +53,34 @@ namespace recsysList
             // Create a retrieve operation that takes a entity.
             TableOperation retrieveOperationState = TableOperation.Retrieve<CustomerEntity>(this.firstProduct, this.secondProduct);
             //TableOperation retrieveOperationStateUpdate = new TableOperation();
-            TableOperation retrieveOperationUser = TableOperation.Retrieve<CustomerEntity>(this.userID, this.blank);
+            TableOperation retrieveOperationUser = TableOperation.Retrieve<CustomerEntity>(this.userID, "blank");
 
             // Execute the retrieve operation.
             TableResult retrievedResultStateMini = tableStateMini.Execute(retrieveOperationState);
             TableResult retrievedResultStateModel = tableStateModel.Execute(retrieveOperationState);
             TableResult retrievedResultUser = tableUser.Execute(retrieveOperationUser);
-            
+
+            // 預先製作熱銷清單，以防推薦清單中有非產品項目
+            // 作法：先將數值向量c(1:40)隨機分派，再取前c個做為欲推薦的商品
+            int numOfTop = 40; // choose top c high number of click item
+            int numOfCandidate = 15; // choose c candidate
+            int[] random = randomNum(numOfTop);
+            string[] spareList = new string[numOfCandidate];
+            // Create the table client.
+            CloudTableClient tableClientHot = storageAccount.CreateCloudTableClient();
+            // Create the CloudTable object that represents the table.
+            CloudTable tableHot = tableClientHot.GetTableReference("forHotItem");
+
+            for (int r = 0; r < numOfCandidate; r++)
+            {
+                // Create a retrieve operation that takes a entity.
+                TableOperation retrieveOperationHot = TableOperation.Retrieve<CustomerEntity>(random[r].ToString(), "blank");
+                // Execute the retrieve operation.
+                TableResult retrievedResultHot = tableHot.Execute(retrieveOperationHot);
+                spareList[r] = ((CustomerEntity)retrievedResultHot.Result).recList;
+            }
+
+
             // 判斷是最小層或是商品層
             TableResult retrievedResultState = new TableResult();
             if (retrievedResultStateMini.Result != null)
@@ -78,113 +99,99 @@ namespace recsysList
                 TableResult retrievedResultStateUpdateModel = tableStateModel.Execute(retrieveOperationStateUpdate);
                 if (retrievedResultStateUpdateMini.Result != null)
                 {
+                    //secondProduct is minimumLayer.
                     retrievedResultState = tableStateMini.Execute(retrieveOperationStateUpdate);
                 }
                 else if (retrievedResultStateUpdateModel.Result != null)
                 {
+                    //secondProduct is Model.
                     retrievedResultState = tableStateModel.Execute(retrieveOperationStateUpdate);
                 }
                 else
                 {
+                    //secondProduct is neither munimumLayer nor Model.
                     retrievedResultState = tableStateMini.Execute(retrieveOperationState);
                 }
             }
 
             // 確認userID是否存在，若存在則按比例分配推薦項目清單；否則，全部由狀態決定推薦項目清單
+            int numOfRec = 5; int numOfHot = 5; int defaultLen = 5;
+            string[] recListFinal1 = new string[numOfRec];
+            string[] recListFinal = new string[numOfRec + numOfHot]; // First numOfRec are rec products, last 10 are hot products.
             if (retrievedResultUser.Result != null)
             {
                 if (retrievedResultState.Result != null)
                 {
                     // 使用者清單取亂數index = 0, 1, 2的產品，狀態清單取亂數index = 0, 1的產品(暫)
-                    int U = 3; int S = 2;
+                    // User
+                    // + 1的原因是避免當前的產品出現在推薦清單中
+                    // byUser 4取3、byState 3取2
+                    int userRec = 3; int stateRec = 2;
+                    int numOfRecByUser = userRec + 1;
                     string[] recListUser = ((CustomerEntity)retrievedResultUser.Result).recList.Split(',');
-                    string[] recListUserRandom = new string[U];
-                    int[] top1 = randomNum(U);
-                    for (int i = 0; i < U; i++)
+                    string[] recListUserRandom = new string[numOfRecByUser];
+                    int[] top1 = randomNum(numOfRecByUser);
+                    for (int i = 0; i < numOfRecByUser; i++)
                     {
                         recListUserRandom[i] = recListUser[top1[i]];
                     }
+                    recListUserRandom = recListUserRandom.Where(s => s != secondProduct).Take(numOfRecByUser - 1).ToArray();
 
+                    // State
+                    int numOfRecByState = stateRec + 1;
                     string[] recListState = ((CustomerEntity)retrievedResultState.Result).recList.Split(';');
-                    string[] recListStateRandom = new string[S];
-                    int[] top2 = randomNum(S);
-                    for (int i = 0; i < S; i++)
+                    string[] recListStateRandom = new string[numOfRecByState];
+                    int[] top2 = randomNum(numOfRecByState);
+                    for (int i = 0; i < numOfRecByState; i++)
                     {
                         recListStateRandom[i] = recListState[top2[i]];
                     }
+                    recListStateRandom = recListStateRandom.Where(s => s != secondProduct).Take(numOfRecByState - 1).ToArray();
 
-                    string[] recListFinal = new string[recListUserRandom.Length + recListStateRandom.Length];
-                    recListUserRandom.CopyTo(recListFinal, 0);
-                    recListStateRandom.CopyTo(recListFinal, recListUserRandom.Length);
-                    foreach (var value in recListFinal)
-                    {
-                        Response.Write("<br />" + value);
-                    }
+                    recListFinal1 = recListUserRandom.Union(recListStateRandom).ToArray();
+                    recListFinal = recListFinal1.Union(spareList.Where(s => s != secondProduct)).Where(s => s != null).Take(10).ToArray();
                 }
                 else
                 {
-                    int U = 5;
+                    int numOfRecByUser = defaultLen + 1;
                     string[] recListUser = ((CustomerEntity)retrievedResultUser.Result).recList.Split(',');
-                    string[] recListUserRandom = new string[U];
-                    int[] top = randomNum(U);
-                    for (int i = 0; i < U; i++)
+                    int[] top = randomNum(numOfRecByUser);
+                    for (int i = 0; i < numOfRecByUser; i++)
                     {
-                        recListUserRandom[i] = recListUser[top[i]];
+                        recListFinal[i] = recListUser[top[i]];
                     }
-
-                    foreach (var value in recListUserRandom)
-                    {
-                        Response.Write("<br />" + value);
-                    }
+                    recListFinal = recListFinal.Where(s => s != secondProduct).ToArray();
+                    recListFinal = recListFinal.Union(spareList.Where(s => s != secondProduct)).Where(s => s != null).Take(10).ToArray();
                 }
-                
             }
             else
             {
                 // 若userID不存在，再判斷狀態是否存在，是則全部推薦清單由狀態清單產生，否則回傳"nothing"
-                int S = 5;
+                // 目前從State吐出的推薦項目只有5項
+                int numOfRecByState = defaultLen;
                 if (retrievedResultState.Result != null)
                 {
                     string[] recListState = ((CustomerEntity)retrievedResultState.Result).recList.Split(';');
-                    string[] recListStateRandom = new string[S];
-                    int[] top = randomNum(S);
-                    for (int i = 0; i < S; i++)
+                    int[] top = randomNum(numOfRecByState);
+                    for (int i = 0; i < numOfRecByState; i++)
                     {
-                        recListStateRandom[i] = recListState[top[i]];
+                        recListFinal[i] = recListState[top[i]];
                     }
-                    foreach (var value in recListStateRandom)
-                    {
-                        Response.Write("<br />" + value);
-                    }
+
+                    recListFinal = recListFinal.Where(s => s != secondProduct).ToArray();
+                    recListFinal = recListFinal.Union(spareList.Where(s => s != secondProduct)).Where(s => s != null).Take(10).ToArray();
                 }
-                else 
+                else
                 {
                     // userID和狀態皆不存在，推薦熱門點擊商品。取前h高的熱門點擊商品進行隨機推薦。
-                    // 作法：先將數值向量c(1:50)隨機分派，再取前c個做為欲推薦的商品
-                    int h = 50; // choose top c high number of click item
-                    int c = 10; // choose c candidate
-                    int[] random = randomNum(h);
-                    int[] candidate = new int[c];
-                    // Create the table client.
-                    CloudTableClient tableClientHot = storageAccount.CreateCloudTableClient();
-
-                    // Create the CloudTable object that represents the table.
-                    CloudTable tableHot = tableClientHot.GetTableReference("forHotItem");
-                    string[] hotItemList = new string[c] ; // to store the candidate item
-                    for (int r = 0; r < c; r++)
-                    {
-                        // Create a retrieve operation that takes a entity.
-                        TableOperation retrieveOperationHot = TableOperation.Retrieve<CustomerEntity>(random[r].ToString(), "blank");
-                        // Execute the retrieve operation.
-                        TableResult retrievedResultHot = tableHot.Execute(retrieveOperationHot);
-                        hotItemList[r] = ((CustomerEntity)retrievedResultHot.Result).recList;
-                    }
-                    
-                    foreach (var value in hotItemList)
-                    {
-                        Response.Write("<br />" + value);
-                    }
+                    recListFinal = spareList;
+                    recListFinal = recListFinal.Where(s => s != secondProduct).Take(10).ToArray();
                 }
+            }
+
+            foreach (string recItem in recListFinal.ToList())
+            {
+                Response.Write("<br />" + recItem);
             }
 
         }
