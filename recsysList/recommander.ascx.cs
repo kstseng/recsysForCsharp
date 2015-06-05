@@ -37,6 +37,8 @@ namespace recsysList
 
         protected void Page_Load(object sender, EventArgs e)
         {
+            //---------------------------
+
             // Retrieve the storage account from the connection string.
             CloudStorageAccount storageAccount = CloudStorageAccount.Parse(
                 System.Configuration.ConfigurationManager.AppSettings["StorageConnectionString"]);
@@ -126,9 +128,10 @@ namespace recsysList
                     // User
                     // + 1的原因是避免當前的產品出現在推薦清單中
                     // byUser 4取3、byState 3取2
-                    int userRec = 3; int stateRec = 2;
-                    int numOfRecByUser = userRec + 1;
+                    int userRec = 3; 
+                    int numOfRecByUserDefault = userRec + 1;
                     string[] recListUser = ((CustomerEntity)retrievedResultUser.Result).recList.Split(',');
+                    int numOfRecByUser = Math.Min(recListUser.Length, numOfRecByUserDefault);
                     string[] recListUserRandom = new string[numOfRecByUser];
                     int[] top1 = randomNum(numOfRecByUser);
                     for (int i = 0; i < numOfRecByUser; i++)
@@ -138,8 +141,10 @@ namespace recsysList
                     recListUserRandom = recListUserRandom.Where(s => s != secondProduct).Take(numOfRecByUser - 1).ToArray();
 
                     // State
-                    int numOfRecByState = stateRec + 1;
+                    int stateRec = 2;
+                    int numOfRecByStateDefault = stateRec + 1;
                     string[] recListState = ((CustomerEntity)retrievedResultState.Result).recList.Split(';');
+                    int numOfRecByState = Math.Min(recListState.Length, numOfRecByStateDefault);
                     string[] recListStateRandom = new string[numOfRecByState];
                     int[] top2 = randomNum(numOfRecByState);
                     for (int i = 0; i < numOfRecByState; i++)
@@ -153,8 +158,9 @@ namespace recsysList
                 }
                 else
                 {
-                    int numOfRecByUser = defaultLen + 1;
+                    int defaultRecLength = defaultLen + 1;
                     string[] recListUser = ((CustomerEntity)retrievedResultUser.Result).recList.Split(',');
+                    int numOfRecByUser = Math.Min(recListUser.Length, defaultRecLength);
                     int[] top = randomNum(numOfRecByUser);
                     for (int i = 0; i < numOfRecByUser; i++)
                     {
@@ -167,11 +173,12 @@ namespace recsysList
             else
             {
                 // 若userID不存在，再判斷狀態是否存在，是則全部推薦清單由狀態清單產生，否則回傳"nothing"
-                // 目前從State吐出的推薦項目只有5項
-                int numOfRecByState = defaultLen;
+                // 因為目前從State吐出的推薦項目只有5項，其他都是10項，所以寫法稍有不同。
+                // int defaultRecLength = defaultLen;
                 if (retrievedResultState.Result != null)
                 {
                     string[] recListState = ((CustomerEntity)retrievedResultState.Result).recList.Split(';');
+                    int numOfRecByState = Math.Min(recListState.Length, defaultLen);
                     int[] top = randomNum(numOfRecByState);
                     for (int i = 0; i < numOfRecByState; i++)
                     {
@@ -188,6 +195,8 @@ namespace recsysList
                     recListFinal = recListFinal.Where(s => s != secondProduct).Take(10).ToArray();
                 }
             }
+
+            //---------------------------
 
             foreach (string recItem in recListFinal.ToList())
             {
